@@ -16,4 +16,4 @@ ElbowPlot(obj, ndims=50)
 num_pc <- NA
 obj %<>% FindNeighbors(reduction='pca', dims=1:num_pc, verbose=FALSE) %>%
 	FindClusters(verbose=FALSE) %>%
-    RunUMAP(reduction='pca', dims=1:num_pc, verbose=FALSE) %>% 
+    RunUMAP(reduction='pca', dims=1:num_pc, verbose=FALSE)
