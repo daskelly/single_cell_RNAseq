@@ -1,0 +1,26 @@
+#!/bin/bash
+
+#PBS -N cell_snp_genotype
+#PBS -l nodes=1:ppn=20,mem=50gb,walltime=23:00:00
+#PBS -m n
+#PBS -j oe
+#PBS -r n
+
+# -m n == do NOT email when done
+# -j oe == one logfile for out and err
+# -r n == not re-runnable
+source $HOME/miniconda3/etc/profile.d/conda.sh  # see https://github.com/conda/conda/issues/7980
+conda activate vireo
+cd $PBS_O_WORKDIR
+
+BAM=possorted_genome_bam.bam
+BARCODE=barcodes.tsv
+OUT_DIR=cell_snp_out
+mkdir -p $OUT_DIR
+VCF=mgp.v5.threebears_snps_indels.PASS.vcf.gz
+cellSNP --samFile=$BAM --barcodeFile=$BARCODE --outDir=$OUT_DIR \
+    --regionsVCF=$VCF --nproc=20 --minMAF 0.1 --minCOUNT 20
+
+RETCODE=$?
+echo "retcode was $RETCODE" >&2
+exit $RETCODE
