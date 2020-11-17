@@ -7,3 +7,6 @@ obj <- UpdateSeuratObject(obj)
 scConf <- createConfig(obj)
 makeShinyApp(obj, scConf, gene.mapping = TRUE,
              shiny.title = "Forte et al 2020 heart MI")
+
+# Could also do:
+# makeShinyFiles() followed by makeShinyCodes()
