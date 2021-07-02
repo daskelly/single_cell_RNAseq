@@ -1,0 +1,126 @@
+---
+title: "Mildner et al 2017 recapitulation"
+author: "Dan Skelly"
+date: "Last updated `r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+root_dir <- '~/projects/scRNA-seq/other_data/Mildner_etal_2017_monocytes'
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(Seurat)
+library(assertthat)
+set.seed(1)
+knitr::opts_knit$set(root.dir=root_dir)
+```
+
+# Read in the data
+
+```{r reading, message=FALSE}
+meta <- read_tsv('GSE95701_metadata.txt.gz', skip=13)
+
+xlist <- list()
+files <- list.files(pattern="^GSM2522.*gz$", full.names=TRUE)
+for (filename in files) {
+  message(filename)
+  xlist[[filename]] <- read.table(filename)
+  #f <- gzfile(filename, 'rb')
+  #h <- readLines(f, n=1) %>% strsplit('\t') %>% `[[`(1)
+  #close(f)
+}
+# Check that all genes quantified are the same
+for (i in 2:length(files)) {
+  assert_that(are_equal(rownames(xlist[[1]]), rownames(xlist[[i]])))
+}
+# Check for no overlap in cell IDs
+cell_ids <- lapply(xlist, colnames)
+uids <- unique(unlist(cell_ids))
+assert_that(length(uids) == sum(sapply(cell_ids, length)))
+
+# Assemble the final count matrix:
+x <- do.call(cbind, unname(xlist))
+rownames(x) <- gsub("_", "-", rownames(x))  # in Seurat feature names cannot have _
+assert_that(all(meta$well %in% colnames(x)))
+```
+
+# Make a Seurat object
+
+From the Mildner et al 2017 paper: Cells with less than 200 UMIs were 
+discarded from the analysis. Genes with mean expression smaller than 
+0.005 UMIs/cell or with above average expression and low coefficient of 
+variance (<1.2) were discarded.
+
+Below, my Seurat commands are loosely based on
+`~/repos/cancer/20190703_tumor_metastasis/normalize_and_cluster.r`
+
+```{r seurat_obj, message=FALSE}
+metadf <- meta %>% as.data.frame() %>% column_to_rownames('well')
+nUMI <- apply(x, 2, sum)
+#normdat <- sweep(x, MARGIN=2, STATS=nUMI, FUN="/")
+mu <- apply(x, 1, mean)
+sigma <- apply(x, 1, sd)
+cv <- sigma/mu
+ercc <- grepl("^ERCC", rownames(x))
+keep <- !ercc & mu >= 0.005 & !is.na(cv) & cv >= 1.2
+mono <- CreateSeuratObject(counts=x[keep, nUMI >= 200], project="Mildner2017",
+                           meta.data=metadf[nUMI >= 200, ])
+mono <- subset(mono, Number_of_cells == 1)
+#mono <- PercentageFeatureSet(mono, pattern="^mt-", col.name="percent.mt")
+mono <- NormalizeData(mono) %>% FindVariableFeatures() %>% 
+  ScaleData(vars.to.regress=c("Amp_batch_ID", "Seq_batch_ID")) %>%
+  RunPCA(verbose=FALSE, npcs=50)
+```
+
+Do PCA and clustering
+
+```{r pca}
+ElbowPlot(mono, ndims=20)
+num_pc <- 5
+mono <- FindNeighbors(mono, reduction='pca', dims=1:num_pc, verbose=FALSE) %>%
+  FindClusters(verbose=FALSE, resolution=0.15) %>%
+  RunUMAP(reduction='pca', dims=1:num_pc, verbose=FALSE)
+UMAPPlot(mono)
+```
+
+# Identifying clusters
+
+```{r id_clusters, fig.width=8, fig.height=7}
+VlnPlot(mono, c("Ly6c2", "Itgal", "Cd74", "H2-Aa", "Cd36", "Sell"), ncol=3)
+VlnPlot(mono, c('Cd74', 'H2-Aa', 'Ciita', 'Ccr2', 'Cd209a'), ncol=3) # cluster 2/II
+```
+```{r clusters2, fig.width=8, fig.height=3.5}
+VlnPlot(mono, c("Cebpb", "Nr4a1", "Ccr2"), ncol=3)
+```
+```{r clusters3, fig.width=8, fig.height=7, message=FALSE}
+VlnPlot(mono, c('Nr4a1', 'Cebpb', 'Cd36', 'Pparg', 'Itgax', 'Itgal'), ncol=3) # cluster 0/IV
+markers <- FindAllMarkers(mono, only.pos=TRUE)
+filter(markers, cluster==0) %>% head(5)
+filter(markers, cluster==1) %>% head(5)
+filter(markers, cluster==2) %>% head(5)
+filter(markers, cluster==3) %>% head(5)
+```
+
+Cluster identifications are:
+
+ * 0 = Nr4a1, Cebpb, Cd36 -> Ly6C- monocytes, Mildner cluster IV
+ * 1 = Ly6c2, Sell -> Ly6C+ monocytes, Mildner cluster I
+ * 2 = Cd74, H2-Aa, Cd209a -> Ly6C^{int}, Mildner cluster II
+ * 3 = nothing apparent. Just distinguished by Mt2 expression.
+
+# Write Seurat object 
+
+Write an object including just the main monocyte populations to file.
+
+```{r writing}
+cnames <- setNames(c("Ly6C- mono", "Ly6C+ mono", "Ly6C^int mono", "Mt2"), 0:3)
+mono$cluster <- cnames[mono$seurat_clusters]
+mono <- subset(mono, cluster != "Mt2")
+filename <- filename <- paste0(root_dir, 
+  "/Mildner_etal_2017_monocytes_recapitulate_", 
+  format(Sys.time(), "%Y%m%d"), ".RData")
+save(mono, file=filename)
+```
